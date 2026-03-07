@@ -1,14 +1,28 @@
 import math
 import yfinance as yf
 import pandas as pd
-from typing import Optional
-from models.schemas import StockOverview, Fundamentals, Competitor
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, SMAIndicator, EMAIndicator
+from ta.volatility import BollingerBands
+
+from models.schemas import (
+    StockOverview,
+    Fundamentals,
+    TechnicalIndicators,
+    Signal,
+    SignalsResponse,
+    Competitor,
+    CompetitorsResponse,
+)
 
 
 def _safe_float(val) -> Optional[float]:
     try:
         v = float(val)
-        return None if (v != v) else v  # NaN check
+        return None if v != v else v
     except (TypeError, ValueError):
         return None
 
@@ -20,142 +34,371 @@ def _safe_int(val) -> int:
         return 0
 
 
-def _fast_info_float(fi, attr: str) -> Optional[float]:
-    """Safely read a float attribute from fast_info."""
+def _safe_dict(obj: Any) -> Dict[str, Any]:
+    return obj if isinstance(obj, dict) else {}
+
+
+def _safe_history(ticker_obj: yf.Ticker, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     try:
-        return _safe_float(getattr(fi, attr))
+        hist = ticker_obj.history(period=period, interval=interval, auto_adjust=False)
+        if hist is None or hist.empty:
+            return pd.DataFrame()
+        return hist
+    except Exception:
+        return pd.DataFrame()
+
+
+def _safe_info(ticker_obj: yf.Ticker) -> Dict[str, Any]:
+    try:
+        info = ticker_obj.info
+        return info if isinstance(info, dict) else {}
+    except Exception:
+        return {}
+
+
+def _fast_info_value(fast_info: Any, key: str) -> Any:
+    try:
+        if hasattr(fast_info, "get"):
+            return fast_info.get(key)
+        return getattr(fast_info, key, None)
     except Exception:
         return None
+
+
+def _fast_info_float(fast_info: Any, key: str) -> Optional[float]:
+    return _safe_float(_fast_info_value(fast_info, key))
+
+
+def _latest_close(hist: pd.DataFrame) -> Optional[float]:
+    if hist is not None and not hist.empty and "Close" in hist.columns:
+        return _safe_float(hist["Close"].iloc[-1])
+    return None
+
+
+def _previous_close(hist: pd.DataFrame) -> Optional[float]:
+    if hist is not None and not hist.empty and "Close" in hist.columns and len(hist) > 1:
+        return _safe_float(hist["Close"].iloc[-2])
+    return None
+
+
+def _compute_technicals_from_history(ticker: str, hist: pd.DataFrame) -> TechnicalIndicators:
+    if hist is None or hist.empty or "Close" not in hist.columns:
+        return TechnicalIndicators(
+            ticker=ticker.upper(),
+            price=0,
+            rsi=None,
+            macd=None,
+            macd_signal=None,
+            macd_hist=None,
+            sma_20=None,
+            sma_50=None,
+            sma_200=None,
+            ema_20=None,
+            bb_upper=None,
+            bb_middle=None,
+            bb_lower=None,
+            bb_position=None,
+            volatility=None,
+            momentum_5d=None,
+            momentum_20d=None,
+            signals=[],
+        )
+
+    close = hist["Close"].astype(float)
+
+    price = _safe_float(close.iloc[-1]) or 0
+
+    rsi = None
+    macd_val = None
+    macd_signal = None
+    macd_hist_val = None
+    sma_20 = None
+    sma_50 = None
+    sma_200 = None
+    ema_20 = None
+    bb_upper = None
+    bb_middle = None
+    bb_lower = None
+    bb_position = None
+    volatility = None
+    momentum_5d = None
+    momentum_20d = None
+
+    try:
+        if len(close) >= 14:
+            rsi = _safe_float(RSIIndicator(close=close, window=14).rsi().iloc[-1])
+    except Exception:
+        pass
+
+    try:
+        if len(close) >= 26:
+            macd_obj = MACD(close=close)
+            macd_val = _safe_float(macd_obj.macd().iloc[-1])
+            macd_signal = _safe_float(macd_obj.macd_signal().iloc[-1])
+            macd_hist_val = _safe_float(macd_obj.macd_diff().iloc[-1])
+    except Exception:
+        pass
+
+    try:
+        if len(close) >= 20:
+            sma_20 = _safe_float(SMAIndicator(close=close, window=20).sma_indicator().iloc[-1])
+            ema_20 = _safe_float(EMAIndicator(close=close, window=20).ema_indicator().iloc[-1])
+            bb = BollingerBands(close=close, window=20, window_dev=2)
+            bb_upper = _safe_float(bb.bollinger_hband().iloc[-1])
+            bb_middle = _safe_float(bb.bollinger_mavg().iloc[-1])
+            bb_lower = _safe_float(bb.bollinger_lband().iloc[-1])
+
+            # Fix 5: scale to 0–100 (not 0–1)
+            if bb_upper is not None and bb_lower is not None and price is not None and bb_upper != bb_lower:
+                bb_position = round((price - bb_lower) / (bb_upper - bb_lower) * 100, 1)
+    except Exception:
+        pass
+
+    try:
+        if len(close) >= 50:
+            sma_50 = _safe_float(SMAIndicator(close=close, window=50).sma_indicator().iloc[-1])
+    except Exception:
+        pass
+
+    try:
+        if len(close) >= 200:
+            sma_200 = _safe_float(SMAIndicator(close=close, window=200).sma_indicator().iloc[-1])
+    except Exception:
+        pass
+
+    try:
+        returns = close.pct_change().dropna()
+        if not returns.empty:
+            volatility = _safe_float(returns.tail(20).std() * (252 ** 0.5))
+    except Exception:
+        pass
+
+    try:
+        if len(close) > 5:
+            old = _safe_float(close.iloc[-6])
+            if old and old != 0:
+                momentum_5d = round(((price - old) / old) * 100, 2)
+    except Exception:
+        pass
+
+    try:
+        if len(close) > 20:
+            old = _safe_float(close.iloc[-21])
+            if old and old != 0:
+                momentum_20d = round(((price - old) / old) * 100, 2)
+    except Exception:
+        pass
+
+    return TechnicalIndicators(
+        ticker=ticker.upper(),
+        price=price,
+        rsi=rsi,
+        macd=macd_val,
+        macd_signal=macd_signal,
+        macd_hist=macd_hist_val,
+        sma_20=sma_20,
+        sma_50=sma_50,
+        sma_200=sma_200,
+        ema_20=ema_20,
+        bb_upper=bb_upper,
+        bb_middle=bb_middle,
+        bb_lower=bb_lower,
+        bb_position=bb_position,
+        volatility=volatility,
+        momentum_5d=momentum_5d,
+        momentum_20d=momentum_20d,
+        signals=[],
+    )
 
 
 async def get_overview(ticker: str) -> StockOverview:
     t = yf.Ticker(ticker.upper())
 
-    # fast_info uses a lightweight Yahoo endpoint — much more reliable than t.info
     try:
-        fi = t.fast_info
+        fast = getattr(t, "fast_info", {}) or {}
     except Exception:
-        fi = None
+        fast = {}
 
-    # History is also reliable (separate endpoint)
-    try:
-        hist = t.history(period="2d")
-    except Exception:
-        hist = pd.DataFrame()
+    info = _safe_info(t)
+    hist = _safe_history(t, period="1y", interval="1d")
 
-    # t.info is the fragile one; wrap it and fall back to {} on any error
-    try:
-        info = t.info
-        if not isinstance(info, dict):
-            info = {}
-    except Exception:
-        info = {}
+    price = (
+        _fast_info_float(fast, "lastPrice")
+        or _safe_float(info.get("currentPrice"))
+        or _latest_close(hist)
+        or 0
+    )
 
-    # ── Price ──────────────────────────────────────────────────────────────
-    price: float = 0.0
-    if fi is not None:
-        price = _fast_info_float(fi, "last_price") or price
-    if not price and not hist.empty:
-        price = _safe_float(hist["Close"].iloc[-1]) or 0.0
-    # last resort: fall back to info fields
-    if not price:
-        price = _safe_float(info.get("currentPrice") or info.get("regularMarketPrice")) or 0.0
+    previous_close = (
+        _fast_info_float(fast, "previousClose")
+        or _safe_float(info.get("previousClose"))
+        or _previous_close(hist)
+    )
 
-    # ── Previous close ─────────────────────────────────────────────────────
-    prev_close: float = price  # default: no change
-    if fi is not None:
-        pc = _fast_info_float(fi, "previous_close")
-        if pc:
-            prev_close = pc
-    if prev_close == price and len(hist) > 1:
-        prev_close = _safe_float(hist["Close"].iloc[-2]) or price
-    if prev_close == price:
-        prev_close = _safe_float(
-            info.get("previousClose") or info.get("regularMarketPreviousClose")
-        ) or price
+    change = round((price or 0) - (previous_close or 0), 2) if previous_close is not None else 0
+    change_pct = round((change / previous_close) * 100, 2) if previous_close not in (None, 0) else 0
 
-    change = round(price - prev_close, 4)
-    change_pct = round(change / (prev_close or 1) * 100, 2)
+    week_52_high = (
+        _fast_info_float(fast, "yearHigh")
+        or _safe_float(info.get("fiftyTwoWeekHigh"))
+    )
+    week_52_low = (
+        _fast_info_float(fast, "yearLow")
+        or _safe_float(info.get("fiftyTwoWeekLow"))
+    )
 
-    # ── Volume ─────────────────────────────────────────────────────────────
-    volume: int = 0
-    if fi is not None:
-        volume = _safe_int(_fast_info_float(fi, "last_volume"))
-    if not volume:
-        volume = _safe_int(info.get("volume") or info.get("regularMarketVolume"))
+    volume = (
+        _safe_int(_fast_info_value(fast, "lastVolume"))
+        or _safe_int(info.get("volume"))
+    )
+    # Fix 1: schema field is avg_volume (not average_volume)
+    avg_volume = (
+        _safe_int(_fast_info_value(fast, "tenDayAverageVolume"))
+        or _safe_int(info.get("averageVolume"))
+    )
 
-    avg_volume: int = 0
-    if fi is not None:
-        avg_volume = _safe_int(_fast_info_float(fi, "three_month_average_volume"))
-    if not avg_volume:
-        avg_volume = _safe_int(info.get("averageVolume") or info.get("averageDailyVolume10Day"))
-
-    # ── Market cap ─────────────────────────────────────────────────────────
-    market_cap: Optional[float] = None
-    if fi is not None:
-        market_cap = _fast_info_float(fi, "market_cap")
-    if market_cap is None:
-        market_cap = _safe_float(info.get("marketCap"))
-
-    # ── 52-week range ──────────────────────────────────────────────────────
-    week_52_high: float = 0.0
-    week_52_low: float = 0.0
-    if fi is not None:
-        week_52_high = _fast_info_float(fi, "year_high") or 0.0
-        week_52_low = _fast_info_float(fi, "year_low") or 0.0
-    if not week_52_high:
-        week_52_high = _safe_float(info.get("fiftyTwoWeekHigh")) or 0.0
-    if not week_52_low:
-        week_52_low = _safe_float(info.get("fiftyTwoWeekLow")) or 0.0
-
-    # ── Currency / exchange (fast_info is reliable here) ───────────────────
-    currency: str = "USD"
-    exchange: str = "N/A"
-    if fi is not None:
-        try:
-            currency = fi.currency or info.get("currency", "USD")
-            exchange = fi.exchange or info.get("exchange") or "N/A"
-        except Exception:
-            pass
-    if currency == "USD" and info.get("currency"):
-        currency = info["currency"]
-    if exchange == "N/A":
-        exchange = info.get("exchange") or info.get("fullExchangeName") or "N/A"
-
-    # ── Name / sector / industry — only available via t.info ───────────────
-    name: str = info.get("longName") or info.get("shortName") or ticker.upper()
-    sector: Optional[str] = info.get("sector")
-    industry: Optional[str] = info.get("industry")
+    market_cap = (
+        _safe_int(_fast_info_value(fast, "marketCap"))
+        or _safe_int(info.get("marketCap"))
+    )
 
     return StockOverview(
         ticker=ticker.upper(),
-        name=name,
+        name=info.get("shortName") or info.get("longName") or ticker.upper(),
+        exchange=info.get("exchange") or _fast_info_value(fast, "exchange") or "N/A",
+        sector=info.get("sector"),
+        industry=info.get("industry"),
         price=price,
+        previous_close=previous_close,
         change=change,
         change_pct=change_pct,
-        volume=volume,
-        avg_volume=avg_volume,
-        market_cap=market_cap,
-        week_52_high=week_52_high,
-        week_52_low=week_52_low,
-        currency=currency,
-        exchange=exchange,
-        sector=sector,
-        industry=industry,
-        previous_close=prev_close if prev_close != price else None,
+        market_cap=market_cap if market_cap > 0 else None,
+        currency=info.get("currency") or _fast_info_value(fast, "currency") or "USD",
+        week_52_high=week_52_high or 0.0,
+        week_52_low=week_52_low or 0.0,
+        volume=volume if volume > 0 else 0,
+        avg_volume=avg_volume if avg_volume > 0 else 0,
+    )
+
+
+async def get_technicals(ticker: str) -> TechnicalIndicators:
+    t = yf.Ticker(ticker.upper())
+    hist = _safe_history(t, period="1y", interval="1d")
+    return _compute_technicals_from_history(ticker, hist)
+
+
+async def get_signals(ticker: str) -> SignalsResponse:
+    technicals = await get_technicals(ticker)
+
+    bullish = 0
+    bearish = 0
+    signal_items: List[Signal] = []
+
+    # RSI
+    if technicals.rsi is not None:
+        rsi_direction = "neutral"
+        if technicals.rsi < 30:
+            bullish += 1
+            rsi_direction = "bullish"
+        elif technicals.rsi > 70:
+            bearish += 1
+            rsi_direction = "bearish"
+        signal_items.append(
+            Signal(label="RSI", value=str(round(technicals.rsi, 2)), direction=rsi_direction)
+        )
+
+    # MACD
+    if technicals.macd is not None and technicals.macd_signal is not None:
+        macd_direction = "neutral"
+        if technicals.macd > technicals.macd_signal:
+            bullish += 1
+            macd_direction = "bullish"
+        elif technicals.macd < technicals.macd_signal:
+            bearish += 1
+            macd_direction = "bearish"
+        signal_items.append(
+            Signal(label="MACD", value=str(round(technicals.macd, 4)), direction=macd_direction)
+        )
+
+    # Moving averages
+    if technicals.price is not None and technicals.sma_50 is not None:
+        ma50_direction = "bullish" if technicals.price > technicals.sma_50 else "bearish"
+        bullish += 1 if ma50_direction == "bullish" else 0
+        bearish += 1 if ma50_direction == "bearish" else 0
+        signal_items.append(
+            Signal(label="Price vs SMA50", value=str(round(technicals.sma_50, 2)), direction=ma50_direction)
+        )
+
+    if technicals.price is not None and technicals.sma_200 is not None:
+        ma200_direction = "bullish" if technicals.price > technicals.sma_200 else "bearish"
+        bullish += 1 if ma200_direction == "bullish" else 0
+        bearish += 1 if ma200_direction == "bearish" else 0
+        signal_items.append(
+            Signal(label="Price vs SMA200", value=str(round(technicals.sma_200, 2)), direction=ma200_direction)
+        )
+
+    # Bollinger position (0–100 scale)
+    if technicals.bb_position is not None:
+        bb_direction = "neutral"
+        if technicals.bb_position < 20:
+            bullish += 1
+            bb_direction = "bullish"
+        elif technicals.bb_position > 80:
+            bearish += 1
+            bb_direction = "bearish"
+        signal_items.append(
+            Signal(label="Bollinger Position", value=f"{round(technicals.bb_position, 1)}%", direction=bb_direction)
+        )
+
+    # Momentum
+    if technicals.momentum_20d is not None:
+        mom_direction = "bullish" if technicals.momentum_20d > 0 else "bearish" if technicals.momentum_20d < 0 else "neutral"
+        bullish += 1 if mom_direction == "bullish" else 0
+        bearish += 1 if mom_direction == "bearish" else 0
+        signal_items.append(
+            Signal(label="20D Momentum", value=f"{round(technicals.momentum_20d, 2)}%", direction=mom_direction)
+        )
+
+    # Trend label
+    trend: Optional[str] = None
+    price = technicals.price
+    sma_50 = technicals.sma_50
+    sma_200 = technicals.sma_200
+    if sma_200 is not None and sma_50 is not None:
+        if price > sma_200 and price > sma_50 and sma_50 > sma_200:
+            trend = "STRONG_UPTREND"
+        elif price > sma_200:
+            trend = "UPTREND"
+        elif price < sma_200 and price < sma_50 and sma_50 < sma_200:
+            trend = "STRONG_DOWNTREND"
+        elif price < sma_200:
+            trend = "DOWNTREND"
+        else:
+            trend = "NEUTRAL"
+    elif sma_200 is not None:
+        trend = "UPTREND" if price > sma_200 else "DOWNTREND"
+
+    score = bullish - bearish
+    overall = "HOLD"
+    if score >= 3:
+        overall = "BUY"
+    elif score <= -3:
+        overall = "SELL"
+
+    # Fix 4: include updated_at
+    return SignalsResponse(
+        ticker=ticker.upper(),
+        signal=overall,
+        score=float(score),
+        trend=trend,
+        signals=signal_items,
+        updated_at=datetime.utcnow().isoformat() + "Z",
     )
 
 
 async def get_fundamentals(ticker: str) -> Fundamentals:
     t = yf.Ticker(ticker.upper())
-
-    # Wrap t.info — it can throw json.JSONDecodeError or network errors
-    try:
-        info = t.info
-        if not isinstance(info, dict):
-            info = {}
-    except Exception:
-        info = {}
+    info = _safe_info(t)
 
     return Fundamentals(
         ticker=ticker.upper(),
@@ -170,13 +413,14 @@ async def get_fundamentals(ticker: str) -> Fundamentals:
         debt_to_equity=_safe_float(info.get("debtToEquity")),
         current_ratio=_safe_float(info.get("currentRatio")),
         dividend_yield=_safe_float(info.get("dividendYield")),
+        beta=_safe_float(info.get("beta")),
         book_value=_safe_float(info.get("bookValue")),
         price_to_book=_safe_float(info.get("priceToBook")),
-        beta=_safe_float(info.get("beta")),
         roe=_safe_float(info.get("returnOnEquity")),
     )
 
 
+# Fix 7: restore get_price_history (used by chart endpoints)
 async def get_price_history(ticker: str, period: str = "1mo") -> list[dict]:
     t = yf.Ticker(ticker.upper())
     try:
@@ -199,18 +443,17 @@ async def get_price_history(ticker: str, period: str = "1mo") -> list[dict]:
     ]
 
 
+# Fix 8: restore compute_history_stats (used by technicals router)
 def compute_history_stats(history: list[dict]) -> dict:
     """
-    Compute annualised volatility and price momentum from OHLCV history dicts
-    (as returned by get_price_history). Pure computation — no I/O.
-    Returns dict with keys: volatility, momentum_5d, momentum_20d (all Optional[float]).
+    Compute annualised volatility and price momentum from OHLCV history dicts.
+    Pure computation — no I/O.
     """
     closes = [row["close"] for row in history if "close" in row]
     result: dict = {"volatility": None, "momentum_5d": None, "momentum_20d": None}
     if len(closes) < 2:
         return result
 
-    # Annualised volatility: std dev of daily log returns × √252
     returns = [
         math.log(closes[i] / closes[i - 1])
         for i in range(1, len(closes))
@@ -221,7 +464,6 @@ def compute_history_stats(history: list[dict]) -> dict:
         var = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
         result["volatility"] = round(math.sqrt(var) * math.sqrt(252), 4)
 
-    # Momentum: (close[-1] / close[-n] - 1) × 100
     if len(closes) >= 6:
         result["momentum_5d"] = round((closes[-1] / closes[-6] - 1) * 100, 2)
     if len(closes) >= 21:
@@ -230,20 +472,27 @@ def compute_history_stats(history: list[dict]) -> dict:
     return result
 
 
-async def get_competitors(ticker: str) -> tuple[Optional[str], list[Competitor]]:
+async def get_competitors(ticker: str) -> CompetitorsResponse:
+    peer_map = {
+        "AAPL": ["MSFT", "GOOGL", "AMZN", "NVDA"],
+        "MSFT": ["AAPL", "GOOGL", "AMZN", "ORCL"],
+        "NVDA": ["AMD", "INTC", "AVGO", "QCOM"],
+        "TSLA": ["GM", "F", "RIVN", "NIO"],
+        "GOOGL": ["META", "MSFT", "AMZN", "AAPL"],
+        "META": ["GOOGL", "SNAP", "PINS", "TWTR"],
+        "AMZN": ["MSFT", "GOOGL", "BABA", "SHOP"],
+        "JPM": ["BAC", "WFC", "GS", "MS"],
+        "BAC": ["JPM", "WFC", "GS", "C"],
+        "XOM": ["CVX", "COP", "SLB", "EOG"],
+        "JNJ": ["PFE", "ABBV", "MRK", "BMY"],
+    }
+
+    # Sector-based fallback for tickers not in the map
     t = yf.Ticker(ticker.upper())
-
-    # Sector detection — wrap t.info
-    try:
-        info = t.info
-        if not isinstance(info, dict):
-            info = {}
-    except Exception:
-        info = {}
-
+    info = _safe_info(t)
     sector = info.get("sector")
 
-    peer_map = {
+    sector_peers: Dict[str, List[str]] = {
         "Technology": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "AMZN", "CRM", "ORCL"],
         "Communication Services": ["META", "GOOGL", "NFLX", "SNAP", "DIS", "T"],
         "Consumer Cyclical": ["AMZN", "TSLA", "NKE", "HD", "MCD", "SBUX"],
@@ -257,52 +506,50 @@ async def get_competitors(ticker: str) -> tuple[Optional[str], list[Competitor]]
         "Utilities": ["NEE", "DUK", "SO", "D", "AEP", "SRE"],
     }
 
-    candidates = peer_map.get(sector or "", [])
-    peers = [p for p in candidates if p != ticker.upper()][:5]
+    candidates = peer_map.get(ticker.upper()) or [
+        p for p in sector_peers.get(sector or "", [])
+        if p != ticker.upper()
+    ]
+    peers = candidates[:5]
 
-    results: list[Competitor] = []
-    for peer in peers:
+    results: List[Competitor] = []
+    for p in peers:
         try:
-            pt = yf.Ticker(peer)
-
-            # Use fast_info as the primary price source for peers too
+            pt = yf.Ticker(p)
+            info_p = _safe_info(pt)
             try:
-                pfi = pt.fast_info
-                price = _fast_info_float(pfi, "last_price") or 0.0
-                prev = _fast_info_float(pfi, "previous_close") or price
-                market_cap: Optional[float] = _fast_info_float(pfi, "market_cap")
+                fast = getattr(pt, "fast_info", {}) or {}
             except Exception:
-                price = 0.0
-                prev = 0.0
-                market_cap = None
+                fast = {}
 
-            # t.info for name and P/E — wrap per peer
-            try:
-                pi = pt.info
-                if not isinstance(pi, dict):
-                    pi = {}
-            except Exception:
-                pi = {}
+            price = (
+                _fast_info_float(fast, "lastPrice")
+                or _safe_float(info_p.get("currentPrice"))
+                or 0
+            )
+            prev = (
+                _fast_info_float(fast, "previousClose")
+                or _safe_float(info_p.get("previousClose"))
+                or price
+            )
+            change_pct = round((price - prev) / prev * 100, 2) if prev and prev != 0 else 0.0
+            market_cap = (
+                _safe_int(_fast_info_value(fast, "marketCap"))
+                or _safe_int(info_p.get("marketCap"))
+            ) or None
 
-            # Fallback price from info if fast_info gave nothing
-            if not price:
-                price = _safe_float(pi.get("currentPrice") or pi.get("regularMarketPrice")) or 0.0
-            if not prev:
-                prev = _safe_float(pi.get("previousClose")) or price
-            if market_cap is None:
-                market_cap = _safe_float(pi.get("marketCap"))
-
-            chg_pct = round((price - prev) / (prev or 1) * 100, 2)
-
-            results.append(Competitor(
-                ticker=peer,
-                name=pi.get("longName") or pi.get("shortName") or peer,
-                price=price,
-                change_pct=chg_pct,
-                market_cap=market_cap,
-                pe_ratio=_safe_float(pi.get("trailingPE")),
-            ))
+            results.append(
+                Competitor(
+                    ticker=p,
+                    name=info_p.get("shortName") or info_p.get("longName") or p,
+                    price=price,
+                    change_pct=change_pct,
+                    market_cap=market_cap if market_cap else None,
+                    pe_ratio=_safe_float(info_p.get("trailingPE")),
+                )
+            )
         except Exception:
             continue
 
-    return sector, results
+    # Fix 6: return CompetitorsResponse directly (router updated to match)
+    return CompetitorsResponse(ticker=ticker.upper(), sector=sector, competitors=results)
