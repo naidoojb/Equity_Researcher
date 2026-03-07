@@ -12,7 +12,7 @@ import json
 import asyncio
 from typing import AsyncGenerator
 import anthropic
-from services import yfinance_service, alphavantage_service, newsapi_service, polygon_service
+from services import market_data_service, newsapi_service, polygon_service
 
 _client = anthropic.Anthropic()
 
@@ -108,25 +108,12 @@ async def execute_tool(name: str, inputs: dict) -> str:
 
     try:
         if name == "get_stock_price":
-            overview = await yfinance_service.get_overview(ticker)
+            overview = await market_data_service.get_overview_with_fallback(ticker)
             return json.dumps(overview.model_dump(), default=str)
 
         elif name == "get_technical_indicators":
-            rsi, (macd, macd_sig, macd_hist), sma_20, sma_50, sma_200, (bb_u, bb_m, bb_l) = (
-                await asyncio.gather(
-                    alphavantage_service.get_rsi(ticker),
-                    alphavantage_service.get_macd(ticker),
-                    alphavantage_service.get_sma(ticker, 20),
-                    alphavantage_service.get_sma(ticker, 50),
-                    alphavantage_service.get_sma(ticker, 200),
-                    alphavantage_service.get_bbands(ticker),
-                )
-            )
-            return json.dumps({
-                "rsi": rsi, "macd": macd, "macd_signal": macd_sig,
-                "macd_hist": macd_hist, "sma_20": sma_20, "sma_50": sma_50,
-                "sma_200": sma_200, "bb_upper": bb_u, "bb_middle": bb_m, "bb_lower": bb_l,
-            })
+            technicals = await market_data_service.get_technicals_with_fallback(ticker)
+            return json.dumps(technicals.model_dump(), default=str)
 
         elif name == "get_news_headlines":
             limit = min(int(inputs.get("limit", 10)), 20)
@@ -139,15 +126,12 @@ async def execute_tool(name: str, inputs: dict) -> str:
             return json.dumps({"headlines": headlines})
 
         elif name == "get_fundamentals":
-            fundamentals = await yfinance_service.get_fundamentals(ticker)
+            fundamentals = await market_data_service.get_fundamentals_with_fallback(ticker)
             return json.dumps(fundamentals.model_dump(), default=str)
 
         elif name == "get_competitor_data":
-            sector, competitors = await yfinance_service.get_competitors(ticker)
-            return json.dumps({
-                "sector": sector,
-                "competitors": [c.model_dump() for c in competitors],
-            }, default=str)
+            comp = await market_data_service.get_competitors_with_fallback(ticker)
+            return json.dumps(comp.model_dump(), default=str)
 
         elif name == "get_options_flow":
             flow = await polygon_service.get_options_flow(ticker)

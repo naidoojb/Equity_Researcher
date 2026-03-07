@@ -287,9 +287,7 @@ async def get_technicals(ticker: str) -> TechnicalIndicators:
     return _compute_technicals_from_history(ticker, hist)
 
 
-async def get_signals(ticker: str) -> SignalsResponse:
-    technicals = await get_technicals(ticker)
-
+def build_signals_response(ticker: str, technicals: TechnicalIndicators) -> SignalsResponse:
     bullish = 0
     bearish = 0
     signal_items: List[Signal] = []
@@ -394,6 +392,11 @@ async def get_signals(ticker: str) -> SignalsResponse:
         signals=signal_items,
         updated_at=datetime.utcnow().isoformat() + "Z",
     )
+
+
+async def get_signals(ticker: str) -> SignalsResponse:
+    technicals = await get_technicals(ticker)
+    return build_signals_response(ticker, technicals)
 
 
 async def get_fundamentals(ticker: str) -> Fundamentals:

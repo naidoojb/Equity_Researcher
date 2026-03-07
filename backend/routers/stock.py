@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import StockOverview
-from services import yfinance_service
+from services import market_data_service
 from utils.cache import cache_overview
 
 router = APIRouter()
@@ -17,4 +17,4 @@ async def get_stock_overview(ticker: str):
 
 @cache_overview
 async def _cached_overview(ticker: str) -> StockOverview:
-    return await yfinance_service.get_overview(ticker)
+    return await market_data_service.get_overview_with_fallback(ticker)

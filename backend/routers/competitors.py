@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import CompetitorsResponse
-from services import yfinance_service
+from services import market_data_service
 from utils.cache import cache_competitors
 
 router = APIRouter()
@@ -17,4 +17,4 @@ async def get_competitors(ticker: str):
 
 @cache_competitors
 async def _cached_competitors(ticker: str) -> CompetitorsResponse:
-    return await yfinance_service.get_competitors(ticker)
+    return await market_data_service.get_competitors_with_fallback(ticker)

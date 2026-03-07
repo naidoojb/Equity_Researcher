@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import Fundamentals
-from services import yfinance_service
+from services import market_data_service
 from utils.cache import cache_fundamentals
 
 router = APIRouter()
@@ -17,4 +17,4 @@ async def get_fundamentals(ticker: str):
 
 @cache_fundamentals
 async def _cached_fundamentals(ticker: str) -> Fundamentals:
-    return await yfinance_service.get_fundamentals(ticker)
+    return await market_data_service.get_fundamentals_with_fallback(ticker)
