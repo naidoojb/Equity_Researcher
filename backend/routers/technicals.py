@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import TechnicalIndicators
-from services import yfinance_service
+from services import market_data_service
 from utils.cache import cache_technicals
 
 router = APIRouter()
@@ -17,4 +17,4 @@ async def get_technicals(ticker: str):
 
 @cache_technicals
 async def _cached_technicals(ticker: str) -> TechnicalIndicators:
-    return await yfinance_service.get_technicals(ticker)
+    return await market_data_service.get_technicals_with_fallback(ticker)

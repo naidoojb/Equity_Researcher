@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from models.schemas import SignalsResponse
-from services import yfinance_service
+from services import market_data_service
 from utils.cache import cache_signals
 
 router = APIRouter()
@@ -17,4 +17,4 @@ async def get_signals(ticker: str):
 
 @cache_signals
 async def _cached_signals(ticker: str) -> SignalsResponse:
-    return await yfinance_service.get_signals(ticker)
+    return await market_data_service.get_signals_with_fallback(ticker)
