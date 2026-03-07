@@ -17,5 +17,4 @@ async def get_competitors(ticker: str):
 
 @cache_competitors
 async def _cached_competitors(ticker: str) -> CompetitorsResponse:
-    sector, competitors = await yfinance_service.get_competitors(ticker)
-    return CompetitorsResponse(ticker=ticker, sector=sector, competitors=competitors)
+    return await yfinance_service.get_competitors(ticker)

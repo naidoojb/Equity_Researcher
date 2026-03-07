@@ -32,7 +32,7 @@ class SignalsResponse(BaseModel):
     score: float         # -1.0 to 1.0
     trend: Optional[str] = None  # STRONG_UPTREND | UPTREND | NEUTRAL | DOWNTREND | STRONG_DOWNTREND
     signals: list[Signal]
-    updated_at: str
+    updated_at: str = ""
 
 
 class NewsItem(BaseModel):
@@ -56,7 +56,7 @@ class TechnicalIndicators(BaseModel):
     rsi: Optional[float]
     macd: Optional[float]
     macd_signal: Optional[float]
-    macd_hist: Optional[float]
+    macd_hist: Optional[float] = None
     sma_20: Optional[float]
     sma_50: Optional[float]
     sma_200: Optional[float]
@@ -69,7 +69,7 @@ class TechnicalIndicators(BaseModel):
     momentum_5d: Optional[float] = None   # % price change over 5 trading days
     momentum_20d: Optional[float] = None  # % price change over 20 trading days
     price: float
-    signals: list[Signal]
+    signals: list[Signal] = []
 
 
 class Fundamentals(BaseModel):
