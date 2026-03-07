@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from models.schemas import SignalsResponse, Signal
 from services import yfinance_service, alphavantage_service, newsapi_service
@@ -21,13 +22,16 @@ async def get_signals(ticker: str):
 
 @cache_signals
 async def _cached_signals(ticker: str) -> SignalsResponse:
-    overview, rsi, (macd, macd_sig, macd_hist), sma_50, sma_200, raw_news = await asyncio.gather(
-        yfinance_service.get_overview(ticker),
-        alphavantage_service.get_rsi(ticker),
-        alphavantage_service.get_macd(ticker),
-        alphavantage_service.get_sma(ticker, 50),
-        alphavantage_service.get_sma(ticker, 200),
-        newsapi_service.get_news(ticker, limit=10),
+    overview, rsi, (macd, macd_sig, macd_hist), sma_50, sma_200, raw_news, (bb_upper, bb_mid, bb_lower) = (
+        await asyncio.gather(
+            yfinance_service.get_overview(ticker),
+            alphavantage_service.get_rsi(ticker),
+            alphavantage_service.get_macd(ticker),
+            alphavantage_service.get_sma(ticker, 50),
+            alphavantage_service.get_sma(ticker, 200),
+            newsapi_service.get_news(ticker, limit=10),
+            alphavantage_service.get_bbands(ticker),
+        )
     )
 
     signals: list[Signal] = []
@@ -84,6 +88,25 @@ async def _cached_signals(ticker: str) -> SignalsResponse:
             signals.append(Signal(label="Below 200-day MA", value=f"${sma_200:.2f}", direction="bearish"))
             score_components.append(-0.2)
 
+    # --- SMA50 signal ---
+    if sma_50 is not None:
+        if price > sma_50:
+            signals.append(Signal(label="Above 50-day MA", value=f"${sma_50:.2f}", direction="bullish"))
+            score_components.append(0.15)
+        else:
+            signals.append(Signal(label="Below 50-day MA", value=f"${sma_50:.2f}", direction="bearish"))
+            score_components.append(-0.15)
+
+    # --- Bollinger Band position signal ---
+    if bb_upper is not None and bb_lower is not None and bb_upper != bb_lower:
+        bb_pos = (price - bb_lower) / (bb_upper - bb_lower) * 100
+        if bb_pos >= 80:
+            signals.append(Signal(label="BB Upper Zone", value=f"{bb_pos:.1f}%", direction="bearish"))
+            score_components.append(-0.15)
+        elif bb_pos <= 20:
+            signals.append(Signal(label="BB Lower Zone", value=f"{bb_pos:.1f}%", direction="bullish"))
+            score_components.append(0.15)
+
     # --- News sentiment ---
     news_scores = await _batch_sentiment_score(raw_news)
     if news_scores:
@@ -106,10 +129,26 @@ async def _cached_signals(ticker: str) -> SignalsResponse:
     else:
         signal_label = "HOLD"
 
+    trend: Optional[str] = None
+    if sma_200 is not None and sma_50 is not None:
+        if price > sma_200 and price > sma_50 and sma_50 > sma_200:
+            trend = "STRONG_UPTREND"
+        elif price > sma_200:
+            trend = "UPTREND"
+        elif price < sma_200 and price < sma_50 and sma_50 < sma_200:
+            trend = "STRONG_DOWNTREND"
+        elif price < sma_200:
+            trend = "DOWNTREND"
+        else:
+            trend = "NEUTRAL"
+    elif sma_200 is not None:
+        trend = "UPTREND" if price > sma_200 else "DOWNTREND"
+
     return SignalsResponse(
         ticker=ticker,
         signal=signal_label,
         score=round(composite, 3),
+        trend=trend,
         signals=signals,
         updated_at=datetime.utcnow().isoformat() + "Z",
     )

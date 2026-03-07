@@ -41,7 +41,7 @@ async def _cached_news(ticker: str) -> NewsResponse:
             published_at=article.get("publishedAt", ""),
             sentiment=sentiment,
             sentiment_label=label,
-            summary=article.get("description"),
+            summary=article.get("description") or None,
         ))
 
     avg_sentiment = (

@@ -1,3 +1,4 @@
+import math
 import yfinance as yf
 import pandas as pd
 from typing import Optional
@@ -141,6 +142,7 @@ async def get_overview(ticker: str) -> StockOverview:
         exchange=exchange,
         sector=sector,
         industry=industry,
+        previous_close=prev_close if prev_close != price else None,
     )
 
 
@@ -171,6 +173,7 @@ async def get_fundamentals(ticker: str) -> Fundamentals:
         book_value=_safe_float(info.get("bookValue")),
         price_to_book=_safe_float(info.get("priceToBook")),
         beta=_safe_float(info.get("beta")),
+        roe=_safe_float(info.get("returnOnEquity")),
     )
 
 
@@ -194,6 +197,37 @@ async def get_price_history(ticker: str, period: str = "1mo") -> list[dict]:
         }
         for _, row in hist.iterrows()
     ]
+
+
+def compute_history_stats(history: list[dict]) -> dict:
+    """
+    Compute annualised volatility and price momentum from OHLCV history dicts
+    (as returned by get_price_history). Pure computation — no I/O.
+    Returns dict with keys: volatility, momentum_5d, momentum_20d (all Optional[float]).
+    """
+    closes = [row["close"] for row in history if "close" in row]
+    result: dict = {"volatility": None, "momentum_5d": None, "momentum_20d": None}
+    if len(closes) < 2:
+        return result
+
+    # Annualised volatility: std dev of daily log returns × √252
+    returns = [
+        math.log(closes[i] / closes[i - 1])
+        for i in range(1, len(closes))
+        if closes[i - 1] > 0
+    ]
+    if len(returns) >= 2:
+        mean = sum(returns) / len(returns)
+        var = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+        result["volatility"] = round(math.sqrt(var) * math.sqrt(252), 4)
+
+    # Momentum: (close[-1] / close[-n] - 1) × 100
+    if len(closes) >= 6:
+        result["momentum_5d"] = round((closes[-1] / closes[-6] - 1) * 100, 2)
+    if len(closes) >= 21:
+        result["momentum_20d"] = round((closes[-1] / closes[-21] - 1) * 100, 2)
+
+    return result
 
 
 async def get_competitors(ticker: str) -> tuple[Optional[str], list[Competitor]]:
