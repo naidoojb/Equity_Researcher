@@ -92,6 +92,47 @@ async def get_ema(ticker: str, time_period: int = 20) -> Optional[float]:
         return None
 
 
+def _safe_float_av(val) -> Optional[float]:
+    try:
+        v = float(str(val).rstrip("%").strip())
+        return None if v != v else v
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int_av(val) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def get_quote(ticker: str) -> dict:
+    """
+    Fetch real-time price/volume/change via GLOBAL_QUOTE.
+    Returns dict with keys: price, previous_close, volume, change, change_pct.
+    Returns {} on any error or when AV returns no data.
+    """
+    try:
+        data = await _fetch({
+            "function": "GLOBAL_QUOTE",
+            "symbol": ticker.upper(),
+        })
+        q = data.get("Global Quote", {})
+        if not q or not q.get("05. price"):
+            return {}
+        return {
+            "price": _safe_float_av(q.get("05. price")),
+            "previous_close": _safe_float_av(q.get("08. previous close")),
+            "volume": _safe_int_av(q.get("06. volume")),
+            "change": _safe_float_av(q.get("09. change")),
+            # AV returns e.g. "1.2345%" — strip the % sign before parsing
+            "change_pct": _safe_float_av(q.get("10. change percent")),
+        }
+    except Exception:
+        return {}
+
+
 async def get_bbands(ticker: str) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Returns (upper, middle, lower)"""
     try:

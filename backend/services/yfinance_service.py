@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 from typing import Optional
 from models.schemas import StockOverview, Fundamentals, Competitor
+from services import alphavantage_service
 
 
 def _safe_float(val) -> Optional[float]:
@@ -74,9 +75,6 @@ async def get_overview(ticker: str) -> StockOverview:
             info.get("previousClose") or info.get("regularMarketPreviousClose")
         ) or price
 
-    change = round(price - prev_close, 4)
-    change_pct = round(change / (prev_close or 1) * 100, 2)
-
     # ── Volume ─────────────────────────────────────────────────────────────
     volume: int = 0
     if fi is not None:
@@ -89,6 +87,35 @@ async def get_overview(ticker: str) -> StockOverview:
         avg_volume = _safe_int(_fast_info_float(fi, "three_month_average_volume"))
     if not avg_volume:
         avg_volume = _safe_int(info.get("averageVolume") or info.get("averageDailyVolume10Day"))
+
+    # ── Alpha Vantage fallback — called only when yfinance returned nothing ─
+    _av_change: Optional[float] = None
+    _av_change_pct: Optional[float] = None
+    if not price:
+        try:
+            av = await alphavantage_service.get_quote(ticker)
+            if av.get("price"):
+                price = av["price"]
+                if prev_close == 0.0 or prev_close == price:
+                    prev_close = av.get("previous_close") or price
+                if not volume:
+                    volume = av.get("volume") or 0
+                # Capture AV-computed change values in case we still can't derive them
+                _av_change = av.get("change")
+                _av_change_pct = av.get("change_pct")
+        except Exception:
+            pass
+
+    # ── Change / change_pct (computed after all price sources are exhausted) ─
+    if prev_close and prev_close != price:
+        change = round(price - prev_close, 4)
+        change_pct = round(change / prev_close * 100, 2)
+    elif _av_change is not None:
+        change = _av_change
+        change_pct = _av_change_pct or 0.0
+    else:
+        change = 0.0
+        change_pct = 0.0
 
     # ── Market cap ─────────────────────────────────────────────────────────
     market_cap: Optional[float] = None
