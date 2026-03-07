@@ -13,13 +13,21 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — allow Expo web dev server and production domains
-cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:8081,http://localhost:19006")
+# CORS — allow Expo web dev server, localhost, and production domains
+cors_origins_raw = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8081,http://localhost:19006,http://localhost:3000,https://tiiny.host",
+)
 cors_origins = [o.strip() for o in cors_origins_raw.split(",")]
+
+# allow_origin_regex handles wildcard subdomains (e.g. https://abc123.tiiny.host)
+# allow_origins only does exact matching, so subdomains must go here
+cors_origin_regex = os.getenv("CORS_ORIGIN_REGEX", r"https://[^.]+\.tiiny\.host")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
