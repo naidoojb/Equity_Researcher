@@ -17,6 +17,7 @@ class StockOverview(BaseModel):
     exchange: str
     sector: Optional[str]
     industry: Optional[str]
+    previous_close: Optional[float] = None
 
 
 class Signal(BaseModel):
@@ -29,6 +30,7 @@ class SignalsResponse(BaseModel):
     ticker: str
     signal: str          # "STRONG BUY" | "BUY" | "HOLD" | "SELL" | "STRONG SELL"
     score: float         # -1.0 to 1.0
+    trend: Optional[str] = None  # STRONG_UPTREND | UPTREND | NEUTRAL | DOWNTREND | STRONG_DOWNTREND
     signals: list[Signal]
     updated_at: str
 
@@ -61,6 +63,11 @@ class TechnicalIndicators(BaseModel):
     bb_upper: Optional[float]
     bb_lower: Optional[float]
     bb_middle: Optional[float]
+    ema_20: Optional[float] = None
+    bb_position: Optional[float] = None   # 0–100 (0 = at lower band, 100 = at upper band)
+    volatility: Optional[float] = None    # annualised, e.g. 0.28 = 28%
+    momentum_5d: Optional[float] = None   # % price change over 5 trading days
+    momentum_20d: Optional[float] = None  # % price change over 20 trading days
     price: float
     signals: list[Signal]
 
@@ -81,6 +88,7 @@ class Fundamentals(BaseModel):
     book_value: Optional[float]
     price_to_book: Optional[float]
     beta: Optional[float]
+    roe: Optional[float] = None  # return on equity as decimal, e.g. 0.32 = 32%
 
 
 class Competitor(BaseModel):

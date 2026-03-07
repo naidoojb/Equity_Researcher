@@ -74,6 +74,24 @@ async def get_sma(ticker: str, time_period: int = 20) -> Optional[float]:
         return None
 
 
+async def get_ema(ticker: str, time_period: int = 20) -> Optional[float]:
+    try:
+        data = await _fetch({
+            "function": "EMA",
+            "symbol": ticker.upper(),
+            "interval": "daily",
+            "time_period": time_period,
+            "series_type": "close",
+        })
+        values = data.get("Technical Analysis: EMA", {})
+        if not values:
+            return None
+        latest_key = sorted(values.keys(), reverse=True)[0]
+        return round(float(values[latest_key]["EMA"]), 4)
+    except Exception:
+        return None
+
+
 async def get_bbands(ticker: str) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Returns (upper, middle, lower)"""
     try:
