@@ -11,6 +11,7 @@ _news_cache = TTLCache(maxsize=200, ttl=900)            # 15 minutes
 _research_cache = TTLCache(maxsize=50, ttl=1800)        # 30 minutes
 _signals_cache = TTLCache(maxsize=200, ttl=120)         # 2 minutes
 _competitors_cache = TTLCache(maxsize=200, ttl=3600)    # 1 hour
+_history_cache = TTLCache(maxsize=200, ttl=300)         # 5 minutes
 
 
 def _make_key(*args, **kwargs) -> str:
@@ -54,6 +55,9 @@ def cache_signals(func):
 
 def cache_competitors(func):
     return cached(_competitors_cache)(func)
+
+def cache_history(func):
+    return cached(_history_cache)(func)
 
 
 def get_research_cache_key(ticker: str) -> str:

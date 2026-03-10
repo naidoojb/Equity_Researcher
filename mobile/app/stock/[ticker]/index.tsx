@@ -4,6 +4,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { Colors } from '../../../src/theme/colors';
 import { useOverview, useSignals } from '../../../src/hooks/useStock';
 import { StockHeader } from '../../../src/components/StockHeader';
+import { PriceChart } from '../../../src/components/PriceChart';
 
 export default function OverviewScreen() {
   const { ticker } = useLocalSearchParams<{ ticker: string }>();
@@ -31,6 +32,8 @@ export default function OverviewScreen() {
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
       <StockHeader overview={overview} signals={signals} />
+
+      <PriceChart ticker={ticker} currentPrice={overview.price} />
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>About</Text>

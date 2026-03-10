@@ -105,6 +105,17 @@ export interface SearchResult {
   sector: string | null;
 }
 
+export interface HistoryPoint {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export type HistoryPeriod = '1wk' | '1mo' | '3mo' | '6mo' | '1y';
+
 // ─── API helpers ───────────────────────────────────────────────────────────
 
 async function get<T>(path: string): Promise<T> {
@@ -139,6 +150,9 @@ export const api = {
 
   getCompetitors: (ticker: string) =>
     get<CompetitorsResponse>(`/api/stock/${ticker}/competitors`),
+
+  getHistory: (ticker: string, period: HistoryPeriod = '1mo') =>
+    get<HistoryPoint[]>(`/api/stock/${ticker}/history?period=${period}`),
 
   /** Returns the SSE URL for the research stream */
   getResearchStreamUrl: (ticker: string) =>

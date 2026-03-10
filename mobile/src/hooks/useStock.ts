@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../services/api';
+import { api, HistoryPeriod } from '../services/api';
 
 export function useOverview(ticker: string) {
   return useQuery({
@@ -54,5 +54,14 @@ export function useCompetitors(ticker: string) {
     queryFn: () => api.getCompetitors(ticker),
     enabled: !!ticker,
     staleTime: 3_600_000,
+  });
+}
+
+export function useHistory(ticker: string, period: HistoryPeriod) {
+  return useQuery({
+    queryKey: ['history', ticker, period],
+    queryFn: () => api.getHistory(ticker, period),
+    enabled: !!ticker,
+    staleTime: 300_000,
   });
 }
