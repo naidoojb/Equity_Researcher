@@ -9,6 +9,7 @@ The research report is streamed back via SSE.
 """
 import os
 import json
+import uuid
 import asyncio
 from typing import AsyncGenerator
 import anthropic
@@ -201,6 +202,9 @@ async def generate_research_stream(ticker: str) -> AsyncGenerator[str, None]:
         ),
     }]
 
+    # Track all tool_use IDs used across the entire conversation to prevent duplicates
+    seen_tool_use_ids: set[str] = set()
+
     # Agentic loop: Claude fetches data via tools, then generates the report
     while True:
         with _client.messages.stream(
@@ -236,7 +240,20 @@ async def generate_research_stream(ticker: str) -> AsyncGenerator[str, None]:
                     pass
 
             final_message = stream.get_final_message()
-            messages.append({"role": "assistant", "content": final_message.content})
+
+            # Convert SDK objects to plain dicts and deduplicate tool_use IDs.
+            # Claude can rarely return the same tool_use ID across iterations,
+            # which causes a 400 "tool_use ids must be unique" API error.
+            content_list = []
+            for block in final_message.content:
+                block_dict = block.model_dump()
+                if block_dict.get("type") == "tool_use":
+                    if block_dict["id"] in seen_tool_use_ids:
+                        block_dict["id"] = f"toolu_{uuid.uuid4().hex}"
+                    seen_tool_use_ids.add(block_dict["id"])
+                content_list.append(block_dict)
+
+            messages.append({"role": "assistant", "content": content_list})
 
             # If Claude is done (no tool calls), end the stream
             if final_message.stop_reason == "end_turn":
@@ -246,23 +263,23 @@ async def generate_research_stream(ticker: str) -> AsyncGenerator[str, None]:
             # Execute tool calls and continue the loop
             if final_message.stop_reason == "tool_use":
                 tool_results = []
-                tool_blocks = [b for b in final_message.content if b.type == "tool_use"]
+                tool_blocks = [b for b in content_list if b.get("type") == "tool_use"]
 
                 # Notify client which tools are being called
                 for block in tool_blocks:
-                    tool_notif = json.dumps({"type": "tool_call", "tool": block.name})
+                    tool_notif = json.dumps({"type": "tool_call", "tool": block["name"]})
                     yield f"data: {tool_notif}\n\n"
 
                 # Execute all tool calls concurrently
                 results = await asyncio.gather(*[
-                    execute_tool(block.name, block.input)
+                    execute_tool(block["name"], block["input"])
                     for block in tool_blocks
                 ])
 
                 for block, result in zip(tool_blocks, results):
                     tool_results.append({
                         "type": "tool_result",
-                        "tool_use_id": block.id,
+                        "tool_use_id": block["id"],
                         "content": result,
                     })
 
