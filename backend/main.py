@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from routers import stock, signals, news, technicals, fundamentals, research, competitors, search
+from routers import stock, signals, news, technicals, fundamentals, research, competitors, search, history
 
 app = FastAPI(
     title="Equity Researcher API",
@@ -45,6 +45,7 @@ app.include_router(technicals.router, prefix="/api/stock", tags=["technicals"])
 app.include_router(fundamentals.router, prefix="/api/stock", tags=["fundamentals"])
 app.include_router(research.router, prefix="/api/stock", tags=["research"])
 app.include_router(competitors.router, prefix="/api/stock", tags=["competitors"])
+app.include_router(history.router, prefix="/api/stock", tags=["history"])
 
 
 @app.get("/health")
